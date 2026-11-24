@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# wx — launcher. Picks an interpreter, never hardcodes a machine path.
+set -euo pipefail
+
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  DIR="$(cd -P "$(dirname "$SELF")" && pwd)"
+  SELF="$(readlink "$SELF")"
+  case "$SELF" in /*) ;; *) SELF="$DIR/$SELF" ;; esac
+done
+ROOT="$(cd -P "$(dirname "$SELF")/.." && pwd)"
+
+pick_python() {
+  if [ -n "${WX_PYTHON:-}" ]; then printf '%s' "$WX_PYTHON"; return; fi
+  for c in "$ROOT/.venv/bin/python" "$HOME/.venvs/wx/bin/python"; do
+    [ -x "$c" ] && { printf '%s' "$c"; return; }
+  done
+  command -v python3
+}
+
+PY="$(pick_python)"
+if [ -z "$PY" ] || ! command -v "$PY" >/dev/null 2>&1; then
+  echo '{"ok": false, "command": "startup", "error": {"code": "DEPENDENCY_MISSING", "message": "python3 not found", "hints": ["Set WX_PYTHON"]}}' >&2
+  exit 6
+fi
+
+exec "$PY" "$ROOT/wx.py" "$@"

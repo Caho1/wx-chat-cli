@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# wxc — remote client launcher. Only needs python3.
+set -euo pipefail
+
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  DIR="$(cd -P "$(dirname "$SELF")" && pwd)"
+  SELF="$(readlink "$SELF")"
+  case "$SELF" in /*) ;; *) SELF="$DIR/$SELF" ;; esac
+done
+ROOT="$(cd -P "$(dirname "$SELF")/.." && pwd)"
+exec "${WX_CLIENT_PYTHON:-python3}" "$ROOT/wxc.py" "$@"

@@ -1,0 +1,19 @@
+# Never commit runtime artefacts or personal data
+*.jsonl
+*.db
+*.db-wal
+*.db-shm
+keys*.json
+serve-token
+serve-audit.log
+reader.sb
+manifest.jsonl
+*.asr.json
+voice/
+exports/
+digest/
+vault/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
