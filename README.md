@@ -5,7 +5,11 @@ envelope, predictable exit codes — plus an optional Tailscale HTTP bridge with
 sandbox that makes **remote decryption physically impossible**.
 
 > Reads **your own** data on **your own** machine. No upload, no third-party API, no telemetry.
-> This repo does **not** include decryption code — see [Backend](#backend-required-separately).
+>
+> **Upstream dependency:** the decryption backend is 逸尘 (Yichen)'s
+> [`yichen-wechat-local-vault`](https://github.com/mcncarl/yichen-skills/tree/main/yichen-wechat-local-vault),
+> installed separately. This repo is the reader layer on top of it and ships **no**
+> decryption or key-extraction code — see [Backend](#backend).
 
 ```
 Agent ──▶ wx <command>  ──▶  JSON {ok, command, data, meta}
@@ -48,21 +52,57 @@ wx doctor
 Requirements: macOS (uses `sandbox-exec` for the remote bridge), Python ≥ 3.9.
 Linux runs the read path fine; the sandboxed bridge is macOS-only by design.
 
-## Backend (required separately)
+<a id="backend"></a>
 
-This CLI is a **reader**. It expects an already-installed
-[`yichen-wechat-local-vault`](https://github.com/mcncarl/yichen-skills) providing
-`scripts/vault_cli.py` and `scripts/decrypt_all_dbs.py`, plus a decrypted vault at
-`~/Library/Application Support/wechat-local-vault/decrypted/current`
-(configurable via `~/.config/wechat-local-vault.json`).
+## Backend: 逸尘 (Yichen)'s yichen-wechat-local-vault
 
-- That project is **not bundled here** and carries its own
-  [non-commercial licence](https://github.com/mcncarl/yichen-skills/blob/main/LICENSE).
-  Read it before use; commercial use needs the author's written permission.
-- Decryption and key capture live there, not here. This repo only reads the result.
-- If `extract_keys.py` reports *0 PBKDF2 calls* on newer macOS, the fix is to resolve
-  `CCKeyDerivationPBKDF` through the global export table instead of per-module
-  enumeration — see [mcncarl/yichen-skills#33](https://github.com/mcncarl/yichen-skills/pull/33).
+This CLI is a **reader**. All key handling and decryption live in the upstream project:
+
+| | |
+| --- | --- |
+| Author | **逸尘 (Yichen)** — WeChat `yichen365ai` |
+| Repo | [`mcncarl/yichen-skills`](https://github.com/mcncarl/yichen-skills) |
+| Skill | [`yichen-wechat-local-vault`](https://github.com/mcncarl/yichen-skills/tree/main/yichen-wechat-local-vault) |
+| Licence | [Personal learning / non-commercial](https://github.com/mcncarl/yichen-skills/blob/main/LICENSE) — **not** MIT |
+
+Install it first, then point this CLI at it:
+
+```bash
+git clone https://github.com/mcncarl/yichen-skills.git ~/code/yichen-skills
+export WX_SKILL_DIR="$HOME/code/yichen-skills/yichen-wechat-local-vault"
+```
+
+What it must provide:
+
+| Need | Path |
+| --- | --- |
+| Query backend | `<WX_SKILL_DIR>/scripts/vault_cli.py` (required) |
+| Decrypt entry | `<WX_SKILL_DIR>/scripts/decrypt_all_dbs.py` (required for `wx refresh`) |
+| Decrypted vault | `~/Library/Application Support/wechat-local-vault/decrypted/current` |
+| Path config | `~/.config/wechat-local-vault.json` (`wxid`, `db_base_path`, `decrypted_dir`, …) |
+| Keys | `~/.config/wechat-keys.json` — produced by the upstream tooling, read only by `wx key` on the host |
+
+### Why nothing is bundled
+
+The upstream licence forbids redistributing the project **or derivative works**. So this repo
+contains no hooking code, no SQLCipher body decryption, and no copy of upstream files — only a
+generic page-0 validity check in `wx key` (decrypt 4096 bytes, assert the SQLite page size).
+
+Practical consequences:
+
+- `wx refresh`, `wx key --capture` and first-time setup are **upstream's job**, not this repo's.
+- `wx key --capture` will explain this and exit `DEPENDENCY_MISSING` unless you drop your own
+  `grab_keys.py` next to `wx.py`.
+- If you need a self-contained decryptor, ask Yichen for written permission first.
+
+### Known upstream issue on recent macOS
+
+If `extract_keys.py` reports *0 PBKDF2 calls*, the hook never installed: on newer macOS
+`CCKeyDerivationPBKDF` lives in a dyld shared-cache library whose export table is not returned by
+`Module.enumerateExports()`. Resolve it through the global export table instead —
+[PR #33](https://github.com/mcncarl/yichen-skills/pull/33) describes the one-function change.
+Also note `frida` ≥ 18 removed `Module.getGlobalExportByName`; pin `frida<18` if you rely on it.
+See [docs/BACKEND.md](docs/BACKEND.md) for details.
 
 ## Commands (19)
 

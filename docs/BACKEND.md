@@ -1,7 +1,9 @@
 # Backend contract
 
 `wx-chat-cli` is a reader. Everything that touches keys or ciphertext lives in the backend you
-install separately.
+install separately: **逸尘 (Yichen)'s**
+[`yichen-wechat-local-vault`](https://github.com/mcncarl/yichen-skills/tree/main/yichen-wechat-local-vault)
+(WeChat `yichen365ai`, [non-commercial licence](https://github.com/mcncarl/yichen-skills/blob/main/LICENSE)).
 
 ## What the CLI expects
 
