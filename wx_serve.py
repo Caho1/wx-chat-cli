@@ -333,7 +333,7 @@ class Handler(BaseHTTPRequestHandler):
         env["WX_READER"] = "1"
         try:
             proc = subprocess.run(
-                [sys.executable, str(script), *argv, "--compact"],
+                [sys.executable, str(script), *argv, "--format", "json", "--compact"],
                 capture_output=True, text=True, env=env,
                 timeout=getattr(self.server, "timeout", 300),
             )
@@ -377,6 +377,15 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 out.extend([a, str(value)])
                 i += 2
+                continue
+            if a == "--format":            # 输出格式由服务端统一为 JSON
+                i += 2
+                continue
+            if a.startswith("--format="):
+                i += 1
+                continue
+            if a in ("--compact",):
+                i += 1
                 continue
             if a in ("--yes", "--force", "--capture"):
                 # 远程不允许触发需要人工确认的动作；显式报错，不静默吞掉
