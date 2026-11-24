@@ -33,6 +33,9 @@ CONFIG_DIR = Path("~/.config/wechat-local-vault").expanduser()
 TOKEN_FILE = CONFIG_DIR / "serve-token"
 AUDIT_FILE = CONFIG_DIR / "serve-audit.log"
 PROFILE_FILE = CONFIG_DIR / "reader.sb"
+SERVICE_LABEL = "com.wxchatcli.serve"
+SERVICE_PLIST = Path("~/Library/LaunchAgents/com.wxchatcli.serve.plist").expanduser()
+SERVICE_LOG_DIR = Path("~/Library/Logs").expanduser()
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 MAX_BODY = 1 << 20          # 1 MB 请求体
 MAX_RESPONSE = 16 << 20     # 16 MB 响应
@@ -393,6 +396,131 @@ class Handler(BaseHTTPRequestHandler):
             out.append(a)
             i += 1
         return out
+
+
+def service_state() -> dict:
+    """返回常驻服务的当前状态（不修改任何东西）。"""
+    loaded = False
+    detail = ""
+    try:
+        out = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{SERVICE_LABEL}"],
+                             capture_output=True, text=True, timeout=10)
+        loaded = out.returncode == 0
+        if loaded:
+            for line in (out.stdout or "").splitlines():
+                if "state = " in line or "pid = " in line:
+                    detail += line.strip() + " "
+    except Exception as exc:  # noqa: BLE001
+        detail = str(exc)
+    return {
+        "label": SERVICE_LABEL,
+        "plist": str(SERVICE_PLIST),
+        "installed": SERVICE_PLIST.exists(),
+        "loaded": loaded,
+        "detail": detail.strip(),
+        "logs": {"out": str(SERVICE_LOG_DIR / "wx-serve.out.log"),
+                 "err": str(SERVICE_LOG_DIR / "wx-serve.err.log")},
+    }
+
+
+def _service_argv(port: int, allow_write: bool, max_limit: int, max_workers: int,
+                  timeout: int, host: str | None, no_sandbox: bool) -> list[str]:
+    argv = [sys.executable, str(Path(__file__).resolve().parent / "wx.py"), "serve",
+            "--port", str(port), "--max-limit", str(max_limit),
+            "--max-workers", str(max_workers), "--timeout", str(timeout)]
+    if host:
+        argv += ["--host", host]
+    if allow_write:
+        argv.append("--allow-write")
+    if no_sandbox:
+        argv.append("--no-sandbox")
+    return argv
+
+
+def install_service(port: int, allow_write: bool, max_limit: int, max_workers: int,
+                    timeout: int, host: str | None, no_sandbox: bool) -> dict:
+    """写 LaunchAgent 并加载：开机自启、崩溃自动重启。"""
+    import wx as wxmod
+
+    argv = _service_argv(port, allow_write, max_limit, max_workers, timeout, host, no_sandbox)
+    env = {
+        "PATH": "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": str(Path("~").expanduser()),
+        "WX_SKILL_DIR": str(wxmod.SKILL_DIR),
+        "WX_PYTHON": str(wxmod.VENV_PY),
+    }
+    env_xml = "\n".join(
+        "    <key>%s</key>\n    <string>%s</string>" % (k, v) for k, v in env.items()
+    )
+    args_xml = "\n".join("    <string>%s</string>" % a for a in argv)
+    out_log = SERVICE_LOG_DIR / "wx-serve.out.log"
+    err_log = SERVICE_LOG_DIR / "wx-serve.err.log"
+    plist = "\n".join([
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0">',
+        '<dict>',
+        '  <key>Label</key>',
+        '  <string>%s</string>' % SERVICE_LABEL,
+        '  <key>ProgramArguments</key>',
+        '  <array>',
+        args_xml,
+        '  </array>',
+        '  <key>EnvironmentVariables</key>',
+        '  <dict>',
+        env_xml,
+        '  </dict>',
+        '  <key>RunAtLoad</key>',
+        '  <true/>',
+        '  <key>KeepAlive</key>',
+        '  <true/>',
+        '  <key>ThrottleInterval</key>',
+        '  <integer>10</integer>',
+        '  <key>ProcessType</key>',
+        '  <string>Background</string>',
+        '  <key>StandardOutPath</key>',
+        '  <string>%s</string>' % out_log,
+        '  <key>StandardErrorPath</key>',
+        '  <string>%s</string>' % err_log,
+        '</dict>',
+        '</plist>',
+        '',
+    ])
+    SERVICE_PLIST.parent.mkdir(parents=True, exist_ok=True)
+    SERVICE_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    SERVICE_PLIST.write_text(plist)
+    os.chmod(SERVICE_PLIST, 0o600)
+
+    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{SERVICE_LABEL}"],
+                   capture_output=True, text=True)
+    proc = subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(SERVICE_PLIST)],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        proc = subprocess.run(["launchctl", "load", "-w", str(SERVICE_PLIST)],
+                              capture_output=True, text=True)
+    return {
+        "installed": SERVICE_PLIST.exists(),
+        "loaded": proc.returncode == 0,
+        "plist": str(SERVICE_PLIST),
+        "program": argv,
+        "logs": {"out": str(out_log), "err": str(err_log)},
+        "error": (proc.stderr or "").strip()[:300],
+        "next": "lsof -nP -iTCP:%d -sTCP:LISTEN" % port,
+    }
+
+
+def uninstall_service() -> dict:
+    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{SERVICE_LABEL}"],
+                   capture_output=True, text=True)
+    subprocess.run(["launchctl", "unload", "-w", str(SERVICE_PLIST)],
+                   capture_output=True, text=True)
+    removed = False
+    if SERVICE_PLIST.exists():
+        SERVICE_PLIST.unlink()
+        removed = True
+    return {"removed": removed, "plist": str(SERVICE_PLIST),
+            "note": "已卸载；vault 与 token 未受影响"}
 
 
 def run_server(host: str | None, port: int, allow_write: bool, max_limit: int,

@@ -292,6 +292,20 @@ def render_text(command: str, data: dict) -> str:
                          f"源库缺失 {len(data['source_missing'])}")
             if data.get("advice"):
                 lines.append(data["advice"])
+    elif command == "serve":
+        svc = data.get("service")
+        if svc:
+            if "detail" in svc:
+                lines.append(f"label: {svc.get('label','')}")
+                lines.append(f"installed: {svc.get('installed')}  loaded: {svc.get('loaded')}  {svc.get('detail','')}")
+            else:
+                lines.append(f"installed: {svc.get('installed')}  loaded: {svc.get('loaded')}")
+            if svc.get("plist"):
+                lines.append(f"plist: {svc['plist']}")
+            if svc.get("next"):
+                lines.append(f"verify: {svc['next']}")
+        if data.get("client_env"):
+            lines += ["", data["client_env"]]
     elif command == "security":
         lines.append(f"profile: {data['profile']}")
         for c in data["checks"]:
@@ -923,6 +937,22 @@ def cmd_serve(args) -> tuple[dict, dict]:
             "client_env": f'export WX_REMOTE=http://{ip}:{args.port}\nexport WX_TOKEN={token}',
         }, {}
     token, created = wx_serve.ensure_token()
+
+    if args.service_status:
+        return {"service": wx_serve.service_state()}, {}
+    if args.uninstall_service:
+        return {"service": wx_serve.uninstall_service()}, {}
+    if args.install_service:
+        result = wx_serve.install_service(
+            args.port, args.allow_write, args.max_limit, args.max_workers,
+            args.timeout, args.host, args.no_sandbox)
+        ip = wx_serve.tailscale_ipv4() or "127.0.0.1"
+        return {
+            "service": result,
+            "client_env": f'export WX_REMOTE=http://{ip}:{args.port}\nexport WX_TOKEN={token}',
+            "hint": "handed to launchd; re-run --install-service to change options",
+        }, {}
+
     if created:
         print(f"[wx] 首次启动，已生成访问 token（600）：{wx_serve.TOKEN_FILE}", file=sys.stderr)
     # 前台阻塞运行；正常退出时不返回信封
@@ -1078,8 +1108,9 @@ COMMANDS = [
      "args": ["--type", "--local-type", "--chat", "--by year|month|day", "--find-tables"],
      "returns": "periods[{period,matched,messages}], totals, top_chats"},
     {"name": "serve", "summary": "通过 Tailscale 暴露 HTTP 接口给其他设备（只读默认）",
-     "args": ["--host", "--port", "--allow-write", "--max-limit", "--token-show"],
-     "returns": "listen, read_only, token_file, endpoints"},
+     "args": ["--host", "--port", "--allow-write", "--max-limit", "--token-show",
+              "--install-service", "--uninstall-service", "--service-status"],
+     "returns": "listen, read_only, token_file, endpoints | service{installed,loaded,plist}"},
     {"name": "security", "summary": "审计解密隔离是否成立（沙箱逐项验证）",
      "args": ["--profile"], "returns": "checks[{check,ok,detail}], passed, total, verdict"},
     {"name": "describe", "summary": "机器可读的能力清单（Agent 自发现入口）",
@@ -1240,6 +1271,10 @@ def build_parser() -> Parser:
     sp.add_argument("--no-sandbox", action="store_true",
                     help="关闭 reader 沙箱（不推荐：会让服务进程可读密钥）")
     sp.add_argument("--timeout", type=int, default=300, help="单请求超时秒数")
+    sp.add_argument("--install-service", action="store_true",
+                    help="写成 LaunchAgent 常驻（开机自启 + 崩溃重启），不阻塞")
+    sp.add_argument("--uninstall-service", action="store_true", help="移除常驻服务")
+    sp.add_argument("--service-status", action="store_true", help="只看常驻服务状态")
 
     sp = add("security", cmd_security)
     sp.add_argument("--profile",
